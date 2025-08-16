@@ -53,40 +53,59 @@ if page == "EDA":
         fig, ax = plt.subplots()
         sns.histplot(df[col_choice], kde=True, ax=ax)
         st.pyplot(fig)
-
     else:
         st.warning("Please upload data first.")
 
-#Preprocessing
-if page == "Preprocessing":
-    st.title("⚙ Data Preprocessing")
+# CLUSTERING
+if page == "Clustering":
+    st.title("📊 LRFMC K-Means Clustering")
     if "df" in st.session_state:
         df = st.session_state.df.copy()
 
-        # Example preprocessing: fill NA, scale, select features
-        df['AGE'] = df['AGE'].fillna(df['AGE'].median())
-        num_cols = df.select_dtypes(include=np.number).columns
+        #Date conversion
+        date_columns = ['FFP_DATE', 'FIRST_FLIGHT_DATE', 'LOAD_TIME', 'LAST_FLIGHT_DATE']
+        for col in date_columns:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
+
+        #Fill missing categorical
+        cat_cols = ['GENDER', 'WORK_CITY', 'WORK_PROVINCE', 'WORK_COUNTRY']
+        for col in cat_cols:
+            if col in df.columns:
+                df[col] = df[col].fillna('Unknown').str.lower()
+
+        #Fill AGE missing
+        if 'AGE' in df.columns:
+            df['AGE'] = df['AGE'].fillna(df['AGE'].median())
+
+        #Drop rows with missing SUM_YR_1 or SUM_YR_2
+        for col in ['SUM_YR_1', 'SUM_YR_2']:
+            if col in df.columns:
+                df = df[df[col].notnull()]
+
+        #Feature engineering L, R, F, M, C
+        df['LENGTH'] = (df['LOAD_TIME'] - df['FFP_DATE']).dt.days
+        lrfmc_features = ['LENGTH', 'LAST_TO_END', 'FLIGHT_COUNT', 'SEG_KM_SUM', 'avg_discount']
+        df_lrfmc = df[lrfmc_features].copy()
+
+        #Outlier capping
+        cols_for_outlier_capping = ['LAST_TO_END', 'FLIGHT_COUNT', 'SEG_KM_SUM', 'avg_discount']
+        for col in cols_for_outlier_capping:
+            high_cut = df_lrfmc[col].quantile(0.99)
+            low_cut = df_lrfmc[col].quantile(0.01)
+            df_lrfmc[col] = np.where(df_lrfmc[col] > high_cut, high_cut, df_lrfmc[col])
+            df_lrfmc[col] = np.where(df_lrfmc[col] < low_cut, low_cut, df_lrfmc[col])
+
+        #Scaling
         scaler = MinMaxScaler()
-        df_scaled = pd.DataFrame(scaler.fit_transform(df[num_cols]), columns=num_cols)
+        df_scaled = pd.DataFrame(scaler.fit_transform(df_lrfmc), columns=lrfmc_features)
 
-        st.session_state.df_scaled = df_scaled
-        st.success("Data scaled successfully!")
-        st.dataframe(df_scaled.head())
-    else:
-        st.warning("Please upload data first.")
-
-#Model Clustering
-if page == "Clustering":
-    st.title("📊 K-Means Clustering")
-    if "df_scaled" in st.session_state:
-        df_scaled = st.session_state.df_scaled
+        #K-Means
         k = st.slider("Select number of clusters (K)", 2, 10, 4)
         kmeans = KMeans(n_clusters=k, random_state=42, n_init=10)
         labels = kmeans.fit_predict(df_scaled)
-
-        df_scaled["Cluster"] = labels
+        df_scaled['Cluster'] = labels
         st.session_state.clustered_df = df_scaled
-        st.success(f"Clustering done with K={k}")
 
         # PCA Visualization
         pca = PCA(n_components=2)
@@ -94,12 +113,15 @@ if page == "Clustering":
         pca_df = pd.DataFrame(components, columns=["PC1", "PC2"])
         pca_df["Cluster"] = labels
 
+        st.subheader("PCA Scatter Plot")
         fig, ax = plt.subplots()
         sns.scatterplot(x="PC1", y="PC2", hue="Cluster", data=pca_df, palette="viridis", ax=ax)
         st.pyplot(fig)
 
+        st.subheader("Cluster Size")
+        st.write(df_scaled["Cluster"].value_counts())
     else:
-        st.warning("Please preprocess data first.")
+        st.warning("Please upload data first.")
 
 #Evaluation
 if page == "Evaluation":
